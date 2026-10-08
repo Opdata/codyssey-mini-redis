@@ -75,6 +75,59 @@ structures/heap.py              최소 힙
 - 자료구조마다 독립된 파일로 분리했다.
 - 네트워크, 영속성, 복잡한 자료형(List/Set/Sorted Set), 동시성은 구현 범위 밖이다.
 
+## 시연 명령어
+
+프로젝트 루트에서 그대로 복사해 실행한다. 출력에서 프롬프트(`mini-redis>`)는 생략했다.
+
+**1. String 명령어 6종**
+```bash
+printf 'SET user:1 "Alice"\nGET user:1\nEXISTS user:1\nDBSIZE\nKEYS\nDEL user:1\nGET user:1\nKEYS\nexit\n' | python3 main.py
+```
+→ `OK` / `"Alice"` / `(integer) 1` / `(integer) 1` / `1. "user:1"` / `(integer) 1` / `(nil)` / `(empty array)`
+
+**2. LRU 자동 제거 + INFO memory**
+```bash
+printf 'CONFIG SET maxmemory 30\nSET user:1 "Alice"\nSET user:2 "Bob"\nSET user:3 "Charlie"\nGET user:1\nINFO memory\nKEYS\nexit\n' | python3 main.py
+```
+→ 누적 33 > 30이 되어 가장 오래된 `user:1`이 제거된다. `(nil)` / `used_memory:22` / `maxmemory:30` / `evicted_keys:1` / `1. "user:2"` / `2. "user:3"`
+
+**3. GET이 LRU 순서를 갱신하는지**
+```bash
+printf 'CONFIG SET maxmemory 30\nSET user:1 "Alice"\nSET user:2 "Bob"\nGET user:1\nSET user:3 "Charlie"\nKEYS\nexit\n' | python3 main.py
+```
+→ `GET user:1`로 user:1이 최근 키가 되어, 이번에는 `user:2`가 제거된다. `1. "user:3"` / `2. "user:1"`
+
+**4. OOM / maxmemory 0 무제한**
+```bash
+printf 'CONFIG SET maxmemory 5\nSET verylongkey "verylongvalue"\nCONFIG SET maxmemory 0\nSET a "1"\nSET b "2"\nSET c "3"\nDBSIZE\nINFO memory\nexit\n' | python3 main.py
+```
+→ `(error) OOM command not allowed when used_memory > 'maxmemory'` / … / `(integer) 3` / `used_memory:6` / `maxmemory:0` / `evicted_keys:0`
+
+**5. TTL 규칙 (대기 없이 확인)**
+```bash
+printf 'TTL nokey\nEXPIRE nokey 10\nSET k "v"\nTTL k\nEXPIRE k 100\nTTL k\nSET k "v2"\nTTL k\nEXPIRE k 0\nEXISTS k\nexit\n' | python3 main.py
+```
+→ `-2` (없는 키) / `0` / `OK` / `-1` (TTL 없음) / `1` / `100` / `OK` / `-1` (덮어쓰기로 초기화) / `1` (즉시 만료) / `0`
+
+**6. TTL 실제 만료 (2.5초 대기)**
+```bash
+(printf 'SET user:2 "Bob"\nEXPIRE user:2 2\nTTL user:2\n'; sleep 2.5; printf 'GET user:2\nTTL user:2\nexit\n') | python3 main.py
+```
+→ `OK` / `(integer) 1` / `(integer) 2` / `(nil)` / `(integer) -2`
+
+**7. 에러 처리**
+```bash
+printf 'HELLO\nGET\nSET onlykey\nCONFIG SET maxmemory abc\nEXPIRE k abc\nexit\n' | python3 main.py
+```
+→ `ERR unknown command 'HELLO'` / `ERR wrong number of arguments for 'GET' command` / `… 'SET' command` / `ERR value is not an integer or out of range` ×2
+
+**8. 자료구조 단독 테스트**
+```bash
+python3 -m structures.doublyLinkedList   # 3 / ['c','b','a'] / c / a / 0 / None
+python3 -m structures.hashMap            # 20 / 32(capacity) / 7 / False / True / None / 19 / 2 20
+python3 -m structures.heap               # (1,'a') / (1,'a') / (3,'c') / 1 / [1..9] / None
+```
+
 ## 실행 예시
 
 ```
